@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Koch Curve with D3.js</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            margin: 2rem;
+        }
+
+        svg {
+            border: 1px solid #ccc;
+            margin-top: 1rem;
+        }
+
+        button {
+            padding: 0.6rem 1.2rem;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+    </style>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script defer src="./main.js"></script>
+</head>
+
+<body>
+    <h1>Koch Curve Generator</h1>
+    <p>Click the button to generate the next fractal step.</p>
+    <button id="next">Next Step</button>
+    <svg width="800" height="400"></svg>
+</body>
+
+</html>
