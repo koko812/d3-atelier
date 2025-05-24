@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Koch Curve - Zoomable</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+        }
+
+        svg {
+            border: 1px solid #ccc;
+            margin-top: 1rem;
+        }
+
+        button {
+            margin: 0.5rem;
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+        }
+
+        #message {
+            margin-top: 1rem;
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Koch Curve - Zoomable Demo</h1>
+    <button id="increase">目を増やす</button>
+    <button id="reset">リセット</button>
+    <button id="toggleMode">図形を切り替え（現在: 直線）</button>
+    <svg width="800" height="400">
+        <g></g> <!-- transform 対応のため -->
+    </svg>
+    <div id="message"></div>
+
+    <script type="module" src="../src/ui/koch_buttons.js"></script>
+</body>
+
+</html>

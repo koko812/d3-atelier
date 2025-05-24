@@ -1,270 +1,344 @@
-# LEARNED.md v4 - Koch Curve Zoomable Exploration
-
-## 🧭 概要
-
-本バージョンでは、コッホ曲線（Koch Curve）およびその拡張であるコッホ雪片（Koch Snowflake）のインタラクティブ描画に取り組んだ。特に D3.js + SVG を用いたUIにおいて、以下の要素を重点的に実装・検証した：
-
-* 図形の切り替え（線分/三角形）
-* 深さ（depth）の段階的増加と制限
-* ズーム機能（クリック中心のスムーズな拡大）
-* SVGグラフィクスにおける表示品質維持
-
-## 🎨 基本構造と描画処理
-
-* `kochTransform(p1, p2)` 関数では、1つの線分を4分割する形で変換する。
-
-  * `p1 -> p2` のベクトルに対して1/3点, 2/3点, そして左60°回転した中点を挿入
-  * 回転方向は左回り（反時計回り）で固定
-
-* `drawKoch(svg, { depth, mode })` にて、初期線分もしくは三角形を起点に `depth` 回の再帰的変換を行い、最終的に `<g>` 要素内に `<line>` を多数配置する形で描画。
-
-* 初期状態：
-
-  * `mode = "line"` → \[\[700, 200], \[100, 200]]（右 → 左）
-  * `mode = "triangle"` → \[\[400, 100], \[250, 350]], \[\[250, 350], \[550, 350]], \[\[550, 350], \[400, 100]]（反時計回り）
-
-## 🐞 バグと修正履歴
-
-### ✅ Bug 1: 山が逆向きに出る（下向きのトゲ）
-
-* **原因**：線分の方向が `kochTransform()` の前提と異なっていた（時計回り or 反時計回り）
-* **修正**：線分モードの初期線分を `[700, 200] → [100, 200]` に反転し、三角形の点順を反時計回りに統一
-
-### ✅ Bug 2: 三角形 snowflake の出っ張りが内側に潜る
-
-* **原因**：正三角形の点列が時計回りになっていた（kochTransform は左回り前提）
-* **修正**：三角形の点列を反時計回りに並べ直し
-
-### ✅ Bug 3: 高depthで線が潰れる
-
-* **原因**：stroke-widthが一定だと、ズーム時に太く見えてしまい精細さが失われる
-* **修正**：
-
-  * `.attr("stroke-width", 0.5)` に設定
-  * `.attr("vector-effect", "non-scaling-stroke")` を追加
-
-## 🔍 理論的ポイントの理解
-
-### 🔁 Kochの再帰構造とflatMapの役割
-
-* `segments = segments.flatMap(kochTransform)` により、各段階で線分数が 4ⁿ に爆発的に増加
-* `flatMap` は `.map(...).flat()` と同義であり、各線分から得られる4つの線分を一次元で統合してくれる
-
-### 📐 回転行列と三角点x3, y3の計算
-
-* 中点(cx, cy) から垂直方向に出っ張るベクトルを計算：
-
-  ```
-  x3 = 0.5 * (x1 + x5) - √3 * (y5 - y1) / 6
-  y3 = 0.5 * (y1 + y5) + √3 * (x5 - x1) / 6
-  ```
-* これは、ベクトル (dx, dy) を原点まわりに左60°回転させたベクトルを用いて、
-  出っ張り三角形の頂点を求めている。
-
-#### 📌 導出過程（60°回転ベクトル）
-
-1. 線分ベクトルを `(dx, dy)` とすると、長さ1の正規化ベクトルは `(dx/L, dy/L)`（L = √(dx²+dy²)）
-2. これを左に60°回転：
-
-   * x' = cos(60°) \* dx - sin(60°) \* dy
-   * y' = sin(60°) \* dx + cos(60°) \* dy
-3. ただし L を省略して、1/3区間ベクトルの長さに比例するよう調整（直接長さではなく比で表現）
-4. 回転ベクトルを三角形の底辺中央に足すことで、山の頂点 `x3, y3` を得る。
-
-* 結果的に、x3/y3は`p1`と`p2`の中点から垂直方向に √3/6 倍だけ出っ張った座標となる。
-
-### 🧩 `g` 要素の使用理由
-
-* `<svg>` に直接 `transform` はかけられないため、`<g>` をグループ要素として使用
-* すべての `<line>` を `<g>` にまとめることで、ズーム・パン時の transform を一括適用可能
-
-## 🔎 ズーム機能の仕組み
-
-### ✅ 基本ズーム
-
-* `d3.zoom()` を `svg.call(...)` にバインドし、
-
-  ```js
-  .on("zoom", (event) => {
-    g.attr("transform", event.transform);
-  });
-  ```
-
-  によって `<g>` に transform を適用
-
-### ✅ クリックズーム（その位置を中心に拡大）
-
-* `svg.on("click", (event) => { ... })` にてクリック位置 `[x, y]` を取得し、次のように変換
-
-  ```js
-  const newTransform = d3.zoomIdentity
-    .translate(width / 2, height / 2)
-    .scale(scale * 1.5)
-    .translate(-x, -y);
-  ```
-
-## 📈 パフォーマンスと深さ制限
-
-| Depth | 線分数       | 描画可能性        |
-| ----- | --------- | ------------ |
-| 5     | 1024      | 十分軽快         |
-| 6     | 4096      | まだ問題なし       |
-| 7     | 16,384    | ブラウザで若干負荷    |
-| 8     | 65,536    | SVGの限界が見え始める |
-| 9+    | 260,000\~ | ✖ クラッシュリスクあり |
-
-* Canvas/WebGL であれば depth 9+ も可能
-* 現構成では **depth 6\~7** 程度までが実用的な上限
-
-## 🧠 気づき・学び・思想
-
-* SVGはズームしても劣化しないが、**構造は変わらない**ため、フラクタルの真価を体験するには「構造の再描画ではなく、ズームそのものが視点の変化」であることが重要
-* **再描画でdepthを上げる方式は“構造が変わってしまう”ため、自己相似性の体験には逆効果**
-* 本物のフラクタル体験は「図形は同じで、見方だけが変わる」方向性で設計すべき
-
----
-
-## ✅ 今後の可能性
-
-* Canvas実装による高depth対応
-* WebGLによるGPU描画の導入
-* 複数フラクタルの切り替え（Sierpinski, Dragon Curve）
-* アニメーション（1秒ごとにdepthを増やす、回転、変形）
-* depth変更にスライダーUI追加
-* ズーム倍率表示と初期化ボタン
-
----
-
-## 🏁 総評
-
-このバージョンで、Koch Fractalの**描画ロジック・方向性・表示制御・ズーム体験**が統一された。
-D3.jsのtransform活用と、SVGの特性を生かしたズーム型フラクタル表示は、今後他の自己相似図形やパラメトリックな構造可視化にも応用できる強力な武器となった。
-
-
-</br>
-</br>
-</br>
-</br>
-</br>
-
-
-# 🧠 LEARNED.md v3 - Koch曲線・D3.js徹底理解編
-
-## 🎯 今回の学習テーマ
-
-* D3.js による SVG 描画のしくみ
-* コッホ曲線（Koch Curve）の構造と変換ロジック
-* `flatMap` を使った線分の再帰的分割
-* SVG `<line>` 要素の管理と `selectAll`/`enter` の意味
-* 幾何学的な回転・ベクトルによる頂点の導出
-* 回転ベクトル・中点からのズレの意味
-
----
-
-## 🔧 技術トピック別まとめ
-
-### 1. `flatMap` と Koch 曲線の段階的分割
-
-* 最初に `[p1, p2]` の1本の線分がある
-* `kochTransform([p1, p2])` により1本が4本に変換される
-* `segments.flatMap(kochTransform)` によって
-
-  * 各線分 → 4本へ
-  * 全体が1次元配列として展開される
-* `flatMap` は、**配列の配列を1つの配列にflattenする `.map().flat()` の合成**であり、ここでは**再帰的な分割**に非常に適している
-
-### 2. D3.js の描画メカニズム
-
-* `svg.selectAll("line")` は既存の `<line>` 要素を全て選択
-* `.data(segments)` で「このデータに対応する要素を用意してね」とD3に伝える
-* `.enter().append("line")` によって、**足りないぶんの `<line>` 要素を自動生成**
-* 各 `.attr("x1", ...)` などで属性を**データドリブンに一括設定**できる
-* ループで明示的に `for` を回すのではなく、\*\*宣言的に「このデータを使って描画して」\*\*と命令するスタイル
-
-### 3. SVG `<line>` 要素の意味
-
-* `<line>` は SVG 上で「1本の線」を表すタグ
-* `selectAll("line")` によって複数の `<line>` 要素を扱える
-* 複数の線分を描画したければ、データを `.data([...])` として一気に渡せばよい
-
-### 4. `kochTransform` の幾何ロジック
-
-* 入力：2点 `[p1, p2]`（線分）
-* 出力：4つの新しい線分（A→P1, P1→X, X→P2, P2→B）
-
-#### 中心から回転して頂点を作る式
-
-```js
-const cx = 0.5 * (x1 + x5);
-const cy = 0.5 * (y1 + y5);
-x3 = cx - Math.sqrt(3) * (y5 - y1) / 6;
-y3 = cy + Math.sqrt(3) * (x5 - x1) / 6;
-```
-
-* この式は「**ベクトル A→B を左に60°回転**させて、**長さ×√3/6** だけ出っ張らせた点を作る」
-* 見かけ上は `cx` = A→Bの中点に見えるが、実際は「三等分された P1→P2 の中点」と一致するため **中点基準でよい**
-
-#### √3/6 の意味
-
-* 正三角形の高さ = `辺長 × √3 / 2`
-* A→B の 1/3 を底辺にするので、高さは `L × √3 / 6`
-* 回転方向ベクトル `(dx, dy)` に対してこの高さを乗算し、正三角形の頂点を作る
-
-### 5. 回転の方向と回転ベクトル
-
-* 回転行列：
-
-```
-[ cosθ  -sinθ ]   [dx]
-[ sinθ   cosθ ] * [dy]
-```
-
-* θ = +60° のとき：
-
-```
-cos(60°) = 1/2
-sin(60°) = √3/2
-```
-
-→ 回転後のベクトルを `(dx', dy')` とすると：
-
-```js
-x3 = cx + dx';
-y3 = cy + dy';
-```
-
-* 実際には `dx' = -dy * √3 / 6`, `dy' = dx * √3 / 6` のように表される
-
----
-
-## 💡 学びのエッセンス
-
-* D3.js は「データドリブン」であり、**命令よりも宣言的に描画を構成できる**
-* `kochTransform` により **幾何学的ルールを再帰的に適用**できる構造が美しい
-* 正三角形を「どんな方向の線分にも均等に立てられる」ように設計された式の巧妙さ
-* 中点からズラしてるように見えて、実は3等分区間の中点であるという構造のトリック
-* 「分かりづらさ」に突っ込んでいくことで、**本質的な回転ベクトルの考え方に到達**できた
-
----
-
-## ✍️ 次のステップ候補
-
-* 任意の depth に対応した再帰的描画UI
-* 三角形の出っ張り方向を反転（右回り60°）に切り替える
-* コッホ雪片（Snowflake）として正三角形全体に展開
-* 回転行列の導出を 2D幾何ベースで描画付きで可視化
-* 他のフラクタル（Tree, Sierpinski）にも同様の構造を展開
-
----
-
-🔥 ここまで理解したことで、もうあなたは「D3.jsとフラクタル」の地図を完全に手に入れました。次はどんな図形も怖くない！
-
-</br>
-</br>
-</br>
-</br>
-</br>
-
+===== 📁 Directory Tree =====
+.
+├── LEARNED.md
+├── README.md
+├── allout.sh
+├── basic.html
+├── basic.js
+├── combined_code.txt
+├── combined_output.txt
+├── index.html
+├── koch.html
+├── koch.js
+└── main.js
+
+1 directory, 11 files
+
+
+
+========== 📄 ./basic.html ==========
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>D3.js - 四角形を描く</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script defer src="./basic.js"></script>
+</head>
+
+<body>
+    <svg width="400" height="400" style="border: 1px solid #ccc;"></svg>
+</body>
+
+</html>
+
+========== 📄 ./index.html ==========
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>伝播シミュレーション</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script defer src="./main.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background: #f8f8f8;
+        }
+
+        svg {
+            display: block;
+            margin: auto;
+            background: white;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+
+<body>
+    <svg width="1000" height="700"></svg>
+</body>
+
+</html>
+
+========== 📄 ./koch.html ==========
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Koch Curve with D3.js</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            margin: 2rem;
+        }
+
+        svg {
+            border: 1px solid #ccc;
+            margin-top: 1rem;
+        }
+
+        button {
+            padding: 0.6rem 1.2rem;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+    </style>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script defer src="./koch.js"></script>
+</head>
+
+<body>
+    <h1>Koch Curve Generator</h1>
+    <p>Click the button to generate the next fractal step.</p>
+    <button id="next">Next Step</button>
+    <svg width="800" height="400"></svg>
+</body>
+
+</html>
+
+========== 📄 ./basic.js ==========
+const svg = d3.select("svg");
+const row = 10;
+const col = 10;
+const size = 30;
+
+for (let i = 0; i < row; i++) {
+    for (let j = 0; j < col; j++) {
+
+        const h = Math.random() * 360;
+        const s = 70 + Math.random() * 30;   // 70〜100%
+        const l = 40 + Math.random() * 20;   // 40〜60%
+        const baseColor = `hsl(${h}, ${s}%, ${l}%)`
+
+        // 各四角の中心座標を計算
+        const cx = 25 + (size+4) * j + (size+4) / 2;
+        const cy = 25 + (size+4) * i + (size+4) / 2;
+
+        // <g> を生成し、中心に移動
+        const group = svg.append("g")
+            .attr("transform", `translate(${cx}, ${cy})`);
+
+        // 中心から -size/2, -size/2 の位置に rect を置く
+        group.append("rect")
+            .attr("x", -size / 2)
+            .attr("y", -size / 2)
+            .attr("width", size)
+            .attr("height", size)
+            .attr("fill", baseColor)
+            .attr("stroke", "black")
+            .attr("stroke-width", 1)
+            .on("mouseover", function () {
+                d3.select(this.parentNode) // g 要素に対して
+                    .raise()
+                    .transition()
+                    .duration(150)
+                    .attr("transform", `translate(${cx}, ${cy}) scale(1.4)`);
+            })
+            .on("mouseout", function () {
+                d3.select(this.parentNode)
+                    .transition()
+                    .duration(150)
+                    .attr("transform", `translate(${cx}, ${cy}) scale(1)`);
+            });
+    }
+}
+
+
+========== 📄 ./koch.js ==========
+const svg = d3.select("svg");
+let segments = [[[100, 200], [700, 200]]];
+
+function draw(segments) {
+    svg.selectAll("line").remove();
+    svg.selectAll("line")
+        .data(segments)
+        .enter()
+        .append("line")
+        .attr("x1", d => d[0][0])
+        .attr("y1", d => d[0][1])
+        .attr("x2", d => d[1][0])
+        .attr("y2", d => d[1][1])
+        .attr("stroke", "black")
+        .attr("stroke-width", 2);
+}
+
+function kochTransform([p1, p2]) {
+    const [x1, y1] = p1;
+    const [x5, y5] = p2;
+    const dx = x5 - x1, dy = y5 - y1;
+
+    const x2 = x1 + dx / 3, y2 = y1 + dy / 3;
+    const x3 = 0.5 * (x1 + x5) - Math.sqrt(3) * (y5 - y1) / 6;
+    const y3 = 0.5 * (y1 + y5) + Math.sqrt(3) * (x5 - x1) / 6;
+    const x4 = x1 + 2 * dx / 3, y4 = y1 + 2 * dy / 3;
+
+    return [
+        [p1, [x2, y2]],
+        [[x2, y2], [x3, y3]],
+        [[x3, y3], [x4, y4]],
+        [[x4, y4], p2]
+    ];
+}
+
+document.getElementById("next").addEventListener("click", () => {
+    segments = segments.flatMap(kochTransform);
+    draw(segments);
+});
+
+draw(segments);
+
+
+========== 📄 ./main.js ==========
+const svg = d3.select("svg");
+const width = +svg.attr("width");
+const height = +svg.attr("height");
+
+const N = 30
+
+const nodes = d3.range(N).map(i => ({ id: i }));
+nodes.forEach(d => d.infected = false);
+
+
+const links = [];
+for (let i = 0; i < N; i++) {
+    const linkCount = Math.floor(Math.random() * 2) + 1; // 1〜3本リンク
+    for (let j = 0; j < linkCount; j++) {
+        const target = Math.floor(Math.random() * N);
+        if (target !== i && !links.some(l => (l.source === i && l.target === target) || (l.source === target && l.target === i))) {
+            links.push({ source: i, target: target });
+        }
+    }
+}
+
+
+// シミュレーション定義
+const simulation = d3.forceSimulation(nodes)
+    .force("link", d3.forceLink(links).id(d => d.id).distance(150))
+    .force("charge", d3.forceManyBody().strength(-200))
+    .force("center", d3.forceCenter(width / 2, height / 2));
+
+// リンク描画
+const link = svg.append("g")
+    .attr("stroke", "#aaa")
+    .attr("stroke-width", 2)
+    .selectAll("line")
+    .data(links)
+    .enter()
+    .append("line");
+
+
+
+const nodeGroup = svg.append("g");
+nodeGroup
+    .selectAll("circle")
+    .data(nodes)
+    .enter()
+    .append("circle")
+    .attr("r", 15)
+    .attr("fill", "#ccc")
+    .attr("stroke", "#333")
+    .attr("stroke-width", 1.5);
+
+const node = nodeGroup.selectAll("circle");  // ← 必ずこれを後に定義！
+
+
+// tick更新
+simulation.on("tick", () => {
+    link
+        .attr("x1", d => d.source.x)
+        .attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x)
+        .attr("y2", d => d.target.y);
+
+    node
+        .attr("cx", d => d.x = Math.max(15, Math.min(width - 15, d.x)))
+        .attr("cy", d => d.y = Math.max(15, Math.min(height - 15, d.y)));
+});
+
+
+function infect(nodeId, delay = 0, fromId = null) {
+    const targetNode = nodes.find(d => d.id === nodeId); // ← データ
+    const nodeSelection = nodeGroup.selectAll("circle"); // ← セレクション
+
+
+    if (!targetNode || targetNode.infected) return;
+
+    targetNode.infected = true;
+
+    nodeSelection
+        .filter(d => d.id === nodeId)
+        .transition()
+        .delay(delay)
+        .duration(300)
+        .attr("fill", "crimson");
+
+
+
+    // もし fromId があるなら → そこからのリンクを色付け
+    if (fromId !== null) {
+        const linkMatch = links.find(l =>
+            (l.source.id === fromId && l.target.id === nodeId) ||
+            (l.source.id === nodeId && l.target.id === fromId)
+        );
+
+        if (linkMatch) {
+            const sx = linkMatch.source.x;
+            const sy = linkMatch.source.y;
+            const tx = linkMatch.target.x;
+            const ty = linkMatch.target.y;
+
+            svg.append("circle")
+                .attr("r", 4)
+                .attr("fill", "orange")
+                .attr("cx", sx)
+                .attr("cy", sy)
+                .transition()
+                .delay(delay)
+                .duration(600)
+                .ease(d3.easeLinear)
+                .attr("cx", tx)
+                .attr("cy", ty)
+                .remove();
+        }
+    }
+
+
+    if (fromId !== null) {
+        d3.selectAll("line")
+            .filter(l =>
+                (l.source.id === fromId && l.target.id === nodeId) ||
+                (l.source.id === nodeId && l.target.id === fromId)
+            )
+            .transition()
+            .delay(delay)
+            .duration(600)
+            .ease(d3.easeLinear)
+            .attr("stroke", "crimson")
+            .attr("stroke-width", 3)
+            .attr("stroke-dasharray", "8 8")
+            .attr("stroke-dashoffset", 0);
+    }
+
+    // 隣接ノード取得
+    const neighbors = links
+        .filter(l => l.source.id === nodeId || l.target.id === nodeId)
+        .map(l => (l.source.id === nodeId ? l.target.id : l.source.id));
+
+    // 感染を伝播
+    neighbors.forEach((neighborId, i) => {
+        setTimeout(() => infect(neighborId, delay + 200, nodeId), 600 + i * 200);
+    });
+}
+
+setTimeout(() => infect(0), 1000);
+
+
+========== 📄 ./LEARNED.md ==========
 # 📘 LEARNED.md — D3.jsで感染伝播シミュレーションを作るまでの学習ログ ver. 2
 
 ---
@@ -598,3 +672,83 @@ for (let i = 0; i < row; i++) {
   2. 2重forでグリッド
   3. 色や大きさのランダム変化
   4. データ駆動型 (data + enter)
+
+========== 📄 ./README.md ==========
+# 🌿 Fractaline - Interactive Koch Curve with D3.js
+
+An interactive, step-by-step visualization of the **Koch Curve** using **D3.js** and **vanilla HTML**.
+Push the limits of recursion and geometry — all in your browser.
+
+![screenshot](screenshot.png)
+
+---
+
+## 🚀 Features
+
+* Recursive generation of the Koch Curve
+* SVG rendering with D3.js
+* Click-to-expand steps (no animation, yet)
+* Ready to be extended with colors, animations, and snowflakes!
+
+---
+
+## 👨‍💻 How to Use
+
+Just open `index.html` in your browser.
+No build tools, no dependencies — pure frontend magic.
+
+```bash
+git clone https://github.com/yourname/fractaline.git
+cd fractaline
+open index.html # or double-click it
+```
+
+---
+
+## 🔧 Future Ideas
+
+* Auto-play mode with animation timer
+* Color by recursion depth
+* Koch Snowflake version
+* Export SVG for printing or sharing
+
+---
+
+## 🧠 What is the Koch Curve?
+
+The Koch Curve is a famous mathematical **fractal**, constructed by recursively replacing each line segment with a four-part pattern.
+It's one of the simplest and most beautiful examples of infinite geometric complexity.
+
+> Fractals: where math meets art.
+
+---
+
+## 📜 License
+
+MIT
+
+
+========== 📄 ./allout.sh ==========
+#!/bin/bash
+
+# 出力ファイル
+output_file="combined_output.txt"
+
+# 初期化
+echo "===== 📁 Directory Tree =====" > "$output_file"
+tree -I "node_modules|.git|*.db" >> "$output_file"
+echo "" >> "$output_file"
+
+# 対象拡張子（必要に応じて追加可能）
+extensions=("html" "js" "md" "sh")
+
+# 各拡張子ごとにファイルを探して出力
+for ext in "${extensions[@]}"; do
+  find . -maxdepth 1 -type f -name "*.${ext}" | sort | while read -r file; do
+    echo -e "\n\n========== 📄 ${file} ==========" >> "$output_file"
+    cat "$file" >> "$output_file"
+  done
+done
+
+echo "✅ 出力完了: ${output_file}"
+
